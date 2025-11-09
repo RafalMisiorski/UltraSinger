@@ -54,8 +54,8 @@ export const deleteJob = async (jobId) => {
   return response.data
 }
 
-export const downloadResult = (jobId) => {
-  return `${API_BASE_URL}/api/jobs/${jobId}/download`
+export const downloadResult = (jobId, fileType = 'main') => {
+  return `${API_BASE_URL}/api/jobs/${jobId}/download?file_type=${fileType}`
 }
 
 export default api

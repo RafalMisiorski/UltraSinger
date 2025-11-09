@@ -90,7 +90,10 @@
         </svg>
         <span class="font-bold">Processing completed successfully!</span>
       </div>
+
+      <!-- Regular (Solo) Download -->
       <a
+        v-if="!job.is_duet"
         :href="downloadUrl"
         download
         class="btn btn-primary w-full"
@@ -100,6 +103,52 @@
         </svg>
         Download UltraStar File
       </a>
+
+      <!-- Duet Downloads -->
+      <div v-else class="space-y-3">
+        <h4 class="font-bold text-green-400 flex items-center gap-2">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+          </svg>
+          Duet files ready!
+        </h4>
+
+        <!-- Primary duet file -->
+        <a
+          :href="downloadDuetUrl"
+          download
+          class="btn btn-primary w-full"
+        >
+          <svg class="w-5 h-5 mr-2 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+          </svg>
+          Download Duet File (P1 + P2)
+        </a>
+
+        <!-- Solo files -->
+        <div class="grid grid-cols-2 gap-2">
+          <a
+            :href="downloadSolo1Url"
+            download
+            class="btn btn-secondary text-sm py-2"
+          >
+            <svg class="w-4 h-4 mr-1 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+            </svg>
+            {{ job.speaker_1_name || 'Singer 1' }}
+          </a>
+          <a
+            :href="downloadSolo2Url"
+            download
+            class="btn btn-secondary text-sm py-2"
+          >
+            <svg class="w-4 h-4 mr-1 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+            </svg>
+            {{ job.speaker_2_name || 'Singer 2' }}
+          </a>
+        </div>
+      </div>
     </div>
 
     <!-- Error State -->
@@ -232,5 +281,17 @@ const elapsedTime = computed(() => {
 
 const downloadUrl = computed(() => {
   return downloadResult(props.job.job_id)
+})
+
+const downloadDuetUrl = computed(() => {
+  return downloadResult(props.job.job_id, 'duet')
+})
+
+const downloadSolo1Url = computed(() => {
+  return downloadResult(props.job.job_id, 'solo1')
+})
+
+const downloadSolo2Url = computed(() => {
+  return downloadResult(props.job.job_id, 'solo2')
 })
 </script>

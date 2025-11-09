@@ -45,6 +45,10 @@ class CreateJobRequest(BaseModel):
     language: str = Field(..., description="Language code: it, en, or pl")
     quality: QualityPreset = QualityPreset.BALANCED
     manual_lyrics: Optional[str] = None
+    # Duet mode fields
+    is_duet: bool = False
+    speaker_1_name: Optional[str] = None
+    speaker_2_name: Optional[str] = None
 
     @validator("youtube_url")
     def validate_youtube_url(cls, v, values):
@@ -89,6 +93,13 @@ class JobResponse(BaseModel):
     progress: Optional[JobProgress] = None
     error_message: Optional[str] = None
     result_file_path: Optional[str] = None
+    # Duet mode fields
+    is_duet: bool = False
+    speaker_1_name: Optional[str] = None
+    speaker_2_name: Optional[str] = None
+    duet_result_file_path: Optional[str] = None
+    solo_1_result_file_path: Optional[str] = None
+    solo_2_result_file_path: Optional[str] = None
 
 
 class JobListResponse(BaseModel):

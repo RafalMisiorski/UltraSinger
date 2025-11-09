@@ -131,6 +131,68 @@
       </div>
     </div>
 
+    <!-- Duet Mode Toggle -->
+    <div class="mb-6">
+      <div class="flex items-center gap-3 mb-4">
+        <input
+          id="duet-mode"
+          type="checkbox"
+          v-model="isDuetMode"
+          class="w-5 h-5 rounded border-gray-600 bg-gray-700 text-primary-600 focus:ring-2 focus:ring-primary-500"
+        />
+        <label for="duet-mode" class="flex items-center gap-2 cursor-pointer">
+          <svg class="w-6 h-6 text-primary-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+          </svg>
+          <span class="text-lg font-medium">Create Duet Version (2 singers)</span>
+        </label>
+      </div>
+
+      <!-- Duet Options (shown when enabled) -->
+      <transition name="slide-down">
+        <div v-if="isDuetMode" class="glass p-4 rounded-lg space-y-4">
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium mb-2">Singer 1 Name (optional)</label>
+              <input
+                v-model="speaker1Name"
+                type="text"
+                placeholder="e.g., Lady Gaga"
+                class="input"
+              />
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-2">Singer 2 Name (optional)</label>
+              <input
+                v-model="speaker2Name"
+                type="text"
+                placeholder="e.g., Bradley Cooper"
+                class="input"
+              />
+            </div>
+          </div>
+
+          <!-- Info Box -->
+          <div class="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 flex gap-3">
+            <svg class="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div class="text-sm text-blue-300">
+              <p class="font-medium mb-1">AI will automatically:</p>
+              <ul class="list-disc list-inside space-y-1 text-blue-200">
+                <li>Detect and separate the two main vocal tracks</li>
+                <li>Create individual karaoke files for each singer</li>
+                <li>Generate a combined duet file with P1/P2 markers</li>
+              </ul>
+              <p class="mt-2 text-xs text-blue-400">
+                ⚠️ Processing time will be approximately 2x longer for duets
+              </p>
+            </div>
+          </div>
+        </div>
+      </transition>
+    </div>
+
     <!-- Submit Button -->
     <button
       @click="handleSubmit"
@@ -165,6 +227,10 @@ const isDragging = ref(false)
 const isSubmitting = ref(false)
 const errors = ref({})
 const fileInput = ref(null)
+// Duet mode
+const isDuetMode = ref(false)
+const speaker1Name = ref('')
+const speaker2Name = ref('')
 
 const languages = [
   { code: 'it', name: 'Italian', flag: '🇮🇹' },
@@ -248,6 +314,9 @@ const handleSubmit = async () => {
       quality: selectedQuality.value,
       youtube_url: sourceType.value === 'youtube' ? youtubeUrl.value : null,
       upload_filename: uploadFilename,
+      is_duet: isDuetMode.value,
+      speaker_1_name: speaker1Name.value || null,
+      speaker_2_name: speaker2Name.value || null,
     }
 
     const job = await createJob(jobData)
@@ -266,3 +335,20 @@ const handleSubmit = async () => {
   }
 }
 </script>
+
+<style scoped>
+.slide-down-enter-active,
+.slide-down-leave-active {
+  transition: all 0.3s ease;
+}
+
+.slide-down-enter-from {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+.slide-down-leave-to {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+</style>

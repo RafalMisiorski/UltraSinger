@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from api.models import JobStatus, ProcessingStep, QualityPreset, JobSource
 from services.youtube_service import download_youtube_audio
 from services.ultrasinger_service import process_with_ultrasinger
+from services.duet_service import detect_speakers, split_by_speaker, merge_to_duet_format
 from utils.config import settings
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,13 @@ class Job:
     progress_percentage: int = 0
     progress_message: str = ""
     elapsed_seconds: float = 0.0
+    # Duet-specific fields
+    is_duet: bool = False
+    speaker_1_name: Optional[str] = None
+    speaker_2_name: Optional[str] = None
+    duet_result_file: Optional[Path] = None
+    solo_1_result_file: Optional[Path] = None
+    solo_2_result_file: Optional[Path] = None
 
 
 class JobQueue:
@@ -71,6 +79,9 @@ class JobQueue:
         quality: QualityPreset,
         youtube_url: Optional[str] = None,
         upload_filename: Optional[str] = None,
+        is_duet: bool = False,
+        speaker_1_name: Optional[str] = None,
+        speaker_2_name: Optional[str] = None,
     ) -> str:
         """Create a new job and add to queue"""
         job_id = str(uuid.uuid4())
@@ -83,6 +94,9 @@ class JobQueue:
             quality=quality,
             youtube_url=youtube_url,
             upload_filename=upload_filename,
+            is_duet=is_duet,
+            speaker_1_name=speaker_1_name or "Player 1",
+            speaker_2_name=speaker_2_name or "Player 2",
         )
 
         self.jobs[job_id] = job
@@ -218,29 +232,136 @@ class JobQueue:
                     job.input_file = settings.upload_dir / job.upload_filename
                     job.title = job.upload_filename
 
-                # Step 2: Process with UltraSinger
-                update_progress("separating", "Starting UltraSinger processing...", 20)
+                # Step 2: Process with UltraSinger (or duet pipeline)
+                if job.is_duet:
+                    # DUET PROCESSING PIPELINE
+                    logger.info(f"Job {job_id}: Starting duet processing")
 
-                def us_progress(step: str, message: str, percentage: float):
-                    # Map 20-100% to remaining steps
-                    adjusted_pct = 20 + (percentage * 0.8)
-                    update_progress(step, message, adjusted_pct)
+                    # Step 2a: Detect speakers
+                    update_progress("separating", "Detecting speakers in audio...", 20)
 
-                job.result_file = await process_with_ultrasinger(
-                    input_file=job.input_file,
-                    output_dir=job.output_dir,
-                    language=job.language,
-                    whisper_model=whisper_model,
-                    crepe_model=crepe_model,
-                    force_cpu=settings.force_cpu,
-                    ultrasinger_src_path=settings.ultrasinger_src_path,
-                    progress_callback=us_progress,
-                )
+                    speaker_segments = await detect_speakers(
+                        job.input_file,
+                        min_speakers=2,
+                        max_speakers=2,
+                        progress_callback=lambda msg: update_progress("separating", msg, 25)
+                    )
+
+                    if not speaker_segments:
+                        # Fallback to solo mode
+                        logger.warning(f"Job {job_id}: Could not detect 2 speakers, falling back to solo mode")
+                        job.is_duet = False
+                        job.error_message = "Warning: Only 1 speaker detected. Processing as solo."
+                        # Continue with regular processing below
+                    else:
+                        # Step 2b: Split audio by speaker
+                        update_progress("separating", "Separating vocal tracks by speaker...", 30)
+
+                        split_result = await split_by_speaker(
+                            job.input_file,
+                            speaker_segments,
+                            job.output_dir,
+                            progress_callback=lambda msg: update_progress("separating", msg, 35)
+                        )
+
+                        if not split_result:
+                            raise RuntimeError("Failed to split audio by speaker")
+
+                        speaker_1_audio, speaker_2_audio = split_result
+
+                        # Step 2c: Process speaker 1
+                        update_progress("transcribing", f"Processing {job.speaker_1_name} vocals...", 40)
+
+                        speaker_1_dir = job.output_dir / "speaker_1"
+                        speaker_1_dir.mkdir(exist_ok=True)
+
+                        def speaker_1_progress(step: str, message: str, percentage: float):
+                            # Map to 40-65% range
+                            adjusted_pct = 40 + (percentage * 0.25)
+                            update_progress(step, f"{job.speaker_1_name}: {message}", adjusted_pct)
+
+                        job.solo_1_result_file = await process_with_ultrasinger(
+                            input_file=speaker_1_audio,
+                            output_dir=speaker_1_dir,
+                            language=job.language,
+                            whisper_model=whisper_model,
+                            crepe_model=crepe_model,
+                            force_cpu=settings.force_cpu,
+                            ultrasinger_src_path=settings.ultrasinger_src_path,
+                            progress_callback=speaker_1_progress,
+                        )
+
+                        # Step 2d: Process speaker 2
+                        update_progress("transcribing", f"Processing {job.speaker_2_name} vocals...", 65)
+
+                        speaker_2_dir = job.output_dir / "speaker_2"
+                        speaker_2_dir.mkdir(exist_ok=True)
+
+                        def speaker_2_progress(step: str, message: str, percentage: float):
+                            # Map to 65-90% range
+                            adjusted_pct = 65 + (percentage * 0.25)
+                            update_progress(step, f"{job.speaker_2_name}: {message}", adjusted_pct)
+
+                        job.solo_2_result_file = await process_with_ultrasinger(
+                            input_file=speaker_2_audio,
+                            output_dir=speaker_2_dir,
+                            language=job.language,
+                            whisper_model=whisper_model,
+                            crepe_model=crepe_model,
+                            force_cpu=settings.force_cpu,
+                            ultrasinger_src_path=settings.ultrasinger_src_path,
+                            progress_callback=speaker_2_progress,
+                        )
+
+                        # Step 2e: Merge into duet format
+                        update_progress("generating", "Creating duet file with P1/P2 markers...", 90)
+
+                        duet_filename = f"{job.title or 'song'}_duet.txt"
+                        job.duet_result_file = await merge_to_duet_format(
+                            speaker_1_txt=job.solo_1_result_file,
+                            speaker_2_txt=job.solo_2_result_file,
+                            speaker_segments=speaker_segments,
+                            output_file=job.output_dir / duet_filename,
+                            speaker_1_name=job.speaker_1_name,
+                            speaker_2_name=job.speaker_2_name,
+                            progress_callback=lambda msg: update_progress("generating", msg, 95)
+                        )
+
+                        # Set primary result to duet file
+                        job.result_file = job.duet_result_file
+
+                        logger.info(f"Job {job_id}: Duet processing completed")
+                        logger.info(f"  - Duet file: {job.duet_result_file}")
+                        logger.info(f"  - Solo 1 file: {job.solo_1_result_file}")
+                        logger.info(f"  - Solo 2 file: {job.solo_2_result_file}")
+
+                # REGULAR SOLO PROCESSING (or fallback from failed duet)
+                if not job.is_duet or not job.result_file:
+                    update_progress("separating", "Starting UltraSinger processing...", 20)
+
+                    def us_progress(step: str, message: str, percentage: float):
+                        # Map 20-100% to remaining steps
+                        adjusted_pct = 20 + (percentage * 0.8)
+                        update_progress(step, message, adjusted_pct)
+
+                    job.result_file = await process_with_ultrasinger(
+                        input_file=job.input_file,
+                        output_dir=job.output_dir,
+                        language=job.language,
+                        whisper_model=whisper_model,
+                        crepe_model=crepe_model,
+                        force_cpu=settings.force_cpu,
+                        ultrasinger_src_path=settings.ultrasinger_src_path,
+                        progress_callback=us_progress,
+                    )
 
                 # Success!
                 job.status = JobStatus.COMPLETED
                 job.progress_percentage = 100
-                job.progress_message = "Processing completed successfully!"
+                if job.is_duet:
+                    job.progress_message = "Duet processing completed successfully!"
+                else:
+                    job.progress_message = "Processing completed successfully!"
                 job.elapsed_seconds = (datetime.now() - start_time).total_seconds()
                 job.updated_at = datetime.now()
 

@@ -80,6 +80,9 @@ async def create_job(request: CreateJobRequest):
         quality=request.quality,
         youtube_url=request.youtube_url,
         upload_filename=request.upload_filename,
+        is_duet=request.is_duet,
+        speaker_1_name=request.speaker_1_name,
+        speaker_2_name=request.speaker_2_name,
     )
 
     job = job_queue.get_job(job_id)
@@ -132,8 +135,18 @@ async def cancel_job(job_id: str):
 
 
 @router.get("/jobs/{job_id}/download")
-async def download_result(job_id: str):
-    """Download the generated UltraStar file"""
+async def download_result(job_id: str, file_type: str = "main"):
+    """
+    Download the generated UltraStar file(s)
+
+    Args:
+        job_id: Job ID
+        file_type: Type of file to download
+            - "main": Primary result file (duet for duet jobs, solo otherwise)
+            - "duet": Duet file with P1/P2 markers (duet jobs only)
+            - "solo1": First speaker's solo file (duet jobs only)
+            - "solo2": Second speaker's solo file (duet jobs only)
+    """
     job = job_queue.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -141,13 +154,37 @@ async def download_result(job_id: str):
     if job.status != JobStatus.COMPLETED:
         raise HTTPException(status_code=400, detail="Job not completed yet")
 
-    if not job.result_file or not job.result_file.exists():
-        raise HTTPException(status_code=404, detail="Result file not found")
+    # Select which file to download based on file_type
+    file_path = None
+
+    if file_type == "duet" and job.is_duet:
+        file_path = job.duet_result_file
+    elif file_type == "solo1" and job.is_duet:
+        file_path = job.solo_1_result_file
+    elif file_type == "solo2" and job.is_duet:
+        file_path = job.solo_2_result_file
+    elif file_type == "main":
+        file_path = job.result_file
+    else:
+        # Invalid file_type for this job
+        if not job.is_duet:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File type '{file_type}' is only available for duet jobs"
+            )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid file_type: {file_type}. Must be one of: main, duet, solo1, solo2"
+            )
+
+    if not file_path or not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Result file not found for type: {file_type}")
 
     return FileResponse(
-        job.result_file,
+        file_path,
         media_type="text/plain",
-        filename=job.result_file.name,
+        filename=file_path.name,
     )
 
 
@@ -213,4 +250,10 @@ def _job_to_response(job) -> JobResponse:
         progress=progress,
         error_message=job.error_message,
         result_file_path=str(job.result_file) if job.result_file else None,
+        is_duet=job.is_duet,
+        speaker_1_name=job.speaker_1_name,
+        speaker_2_name=job.speaker_2_name,
+        duet_result_file_path=str(job.duet_result_file) if job.duet_result_file else None,
+        solo_1_result_file_path=str(job.solo_1_result_file) if job.solo_1_result_file else None,
+        solo_2_result_file_path=str(job.solo_2_result_file) if job.solo_2_result_file else None,
     )
