@@ -9,7 +9,7 @@ from typing import Dict, Optional, Callable
 from dataclasses import dataclass, field
 
 from api.models import JobStatus, ProcessingStep, QualityPreset, JobSource
-from services.youtube_service import download_youtube_audio
+from services.youtube_service import download_youtube_audio, get_video_info
 from services.ultrasinger_service import process_with_ultrasinger
 from services.duet_service import detect_speakers, split_by_speaker, merge_to_duet_format
 from utils.config import settings
@@ -28,6 +28,7 @@ class Job:
     youtube_url: Optional[str] = None
     upload_filename: Optional[str] = None
     title: Optional[str] = None
+    custom_name: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     input_file: Optional[Path] = None
@@ -38,6 +39,12 @@ class Job:
     progress_percentage: int = 0
     progress_message: str = ""
     elapsed_seconds: float = 0.0
+    # Time estimates
+    estimated_duration_seconds: Optional[int] = None
+    # YouTube metadata
+    youtube_thumbnail: Optional[str] = None
+    youtube_duration: Optional[int] = None
+    youtube_channel: Optional[str] = None
     # Duet-specific fields
     is_duet: bool = False
     speaker_1_name: Optional[str] = None
@@ -79,6 +86,7 @@ class JobQueue:
         quality: QualityPreset,
         youtube_url: Optional[str] = None,
         upload_filename: Optional[str] = None,
+        custom_name: Optional[str] = None,
         is_duet: bool = False,
         speaker_1_name: Optional[str] = None,
         speaker_2_name: Optional[str] = None,
@@ -94,6 +102,7 @@ class JobQueue:
             quality=quality,
             youtube_url=youtube_url,
             upload_filename=upload_filename,
+            custom_name=custom_name,
             is_duet=is_duet,
             speaker_1_name=speaker_1_name or "Player 1",
             speaker_2_name=speaker_2_name or "Player 2",
@@ -116,6 +125,28 @@ class JobQueue:
     def list_jobs(self) -> list[Job]:
         """List all jobs"""
         return sorted(self.jobs.values(), key=lambda j: j.created_at, reverse=True)
+
+    def get_queue_position(self, job_id: str) -> Optional[int]:
+        """Get the position of a job in the processing queue"""
+        job = self.jobs.get(job_id)
+        if not job or job.status not in (JobStatus.QUEUED, JobStatus.PROCESSING):
+            return None
+
+        # Get all queued jobs sorted by creation time
+        queued_jobs = sorted(
+            [j for j in self.jobs.values() if j.status == JobStatus.QUEUED],
+            key=lambda j: j.created_at
+        )
+
+        # If job is queued, find its position
+        if job.status == JobStatus.QUEUED:
+            try:
+                return queued_jobs.index(job) + 1
+            except ValueError:
+                return None
+
+        # If processing, position is 0 (currently running)
+        return 0
 
     def cancel_job(self, job_id: str) -> bool:
         """Cancel a job"""
@@ -178,6 +209,7 @@ class JobQueue:
             quality=old_job.quality,
             youtube_url=old_job.youtube_url,
             upload_filename=old_job.upload_filename,
+            custom_name=old_job.custom_name,
             is_duet=old_job.is_duet,
             speaker_1_name=old_job.speaker_1_name,
             speaker_2_name=old_job.speaker_2_name,
@@ -249,10 +281,36 @@ class JobQueue:
 
                 # Step 1: Get input file
                 if job.source == JobSource.YOUTUBE:
-                    update_progress("downloading", "Downloading from YouTube...", 0)
+                    # Fetch YouTube metadata first
+                    try:
+                        update_progress("downloading", "Fetching video information...", 0)
+                        video_info = await get_video_info(job.youtube_url)
+                        job.youtube_thumbnail = video_info.get("thumbnail")
+                        job.youtube_duration = video_info.get("duration")
+                        job.youtube_channel = video_info.get("channel")
+
+                        # Calculate estimated processing time based on duration and quality
+                        if job.youtube_duration:
+                            # Quality multipliers: FAST=0.5x, BALANCED=1.0x, ACCURATE=2.0x
+                            quality_multiplier = {
+                                QualityPreset.FAST: 0.5,
+                                QualityPreset.BALANCED: 1.0,
+                                QualityPreset.ACCURATE: 2.0,
+                            }[job.quality]
+
+                            # Duet takes ~2x longer (dual processing)
+                            duet_multiplier = 2.0 if job.is_duet else 1.0
+
+                            job.estimated_duration_seconds = int(
+                                job.youtube_duration * quality_multiplier * duet_multiplier
+                            )
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch YouTube metadata: {e}")
+
+                    update_progress("downloading", "Downloading from YouTube...", 2)
 
                     def yt_progress(msg: str, pct: float):
-                        update_progress("downloading", msg, pct * 0.2)  # 0-20%
+                        update_progress("downloading", msg, 2 + (pct * 0.18))  # 2-20%
 
                     job.input_file, job.title = await download_youtube_audio(
                         job.youtube_url,
@@ -263,6 +321,16 @@ class JobQueue:
                     # Upload file is already in upload_dir
                     job.input_file = settings.upload_dir / job.upload_filename
                     job.title = job.upload_filename
+
+                    # For uploads, estimate based on typical song length (3-5 minutes average)
+                    # Without actual duration, use 4 minutes as baseline
+                    quality_multiplier = {
+                        QualityPreset.FAST: 0.5,
+                        QualityPreset.BALANCED: 1.0,
+                        QualityPreset.ACCURATE: 2.0,
+                    }[job.quality]
+                    duet_multiplier = 2.0 if job.is_duet else 1.0
+                    job.estimated_duration_seconds = int(240 * quality_multiplier * duet_multiplier)
 
                 # Step 2: Process with UltraSinger (or duet pipeline)
                 if job.is_duet:

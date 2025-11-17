@@ -1,10 +1,12 @@
 """API routes for UltraSinger web application"""
 
 import logging
+import zipfile
+import io
 from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from api.models import (
     CreateJobRequest,
@@ -15,6 +17,7 @@ from api.models import (
     JobProgress,
 )
 from services.queue_service import job_queue
+from services.youtube_service import get_video_info
 from utils.config import settings
 from utils.validators import is_valid_youtube_url, is_valid_audio_file, sanitize_filename
 
@@ -57,6 +60,22 @@ async def upload_file(file: UploadFile = File(...)):
     )
 
 
+@router.get("/youtube/preview")
+async def preview_youtube(url: str):
+    """Get YouTube video metadata without downloading"""
+    if not is_valid_youtube_url(url):
+        raise HTTPException(status_code=400, detail="Invalid YouTube URL")
+
+    try:
+        info = await get_video_info(url)
+        return info
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to fetch YouTube video information: {str(e)}"
+        )
+
+
 @router.post("/jobs/create", response_model=JobResponse)
 async def create_job(request: CreateJobRequest):
     """Create a new processing job"""
@@ -80,6 +99,7 @@ async def create_job(request: CreateJobRequest):
         quality=request.quality,
         youtube_url=request.youtube_url,
         upload_filename=request.upload_filename,
+        custom_name=request.custom_name,
         is_duet=request.is_duet,
         speaker_1_name=request.speaker_1_name,
         speaker_2_name=request.speaker_2_name,
@@ -202,6 +222,51 @@ async def download_result(job_id: str, file_type: str = "main"):
     )
 
 
+@router.get("/jobs/{job_id}/download-zip")
+async def download_all_as_zip(job_id: str):
+    """Download all duet files as a ZIP archive"""
+    job = job_queue.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.status != JobStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="Job not completed yet")
+
+    if not job.is_duet:
+        raise HTTPException(status_code=400, detail="ZIP download is only available for duet jobs")
+
+    # Create ZIP file in memory
+    zip_buffer = io.BytesIO()
+
+    try:
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # Add duet file
+            if job.duet_result_file and job.duet_result_file.exists():
+                zip_file.write(job.duet_result_file, job.duet_result_file.name)
+
+            # Add solo files
+            if job.solo_1_result_file and job.solo_1_result_file.exists():
+                zip_file.write(job.solo_1_result_file, job.solo_1_result_file.name)
+
+            if job.solo_2_result_file and job.solo_2_result_file.exists():
+                zip_file.write(job.solo_2_result_file, job.solo_2_result_file.name)
+
+        # Prepare ZIP for download
+        zip_buffer.seek(0)
+
+        filename = f"{job.title or 'duet'}_all_files.zip".replace(" ", "_")
+
+        return StreamingResponse(
+            io.BytesIO(zip_buffer.getvalue()),
+            media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to create ZIP for job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create ZIP archive")
+
+
 @router.websocket("/ws/{job_id}")
 async def websocket_endpoint(websocket: WebSocket, job_id: str):
     """WebSocket endpoint for real-time job progress updates"""
@@ -252,6 +317,9 @@ def _job_to_response(job) -> JobResponse:
             elapsed_seconds=job.elapsed_seconds,
         )
 
+    # Get queue position
+    queue_position = job_queue.get_queue_position(job.job_id)
+
     return JobResponse(
         job_id=job.job_id,
         source=job.source,
@@ -259,11 +327,18 @@ def _job_to_response(job) -> JobResponse:
         language=job.language,
         quality=job.quality,
         title=job.title,
+        custom_name=job.custom_name,
         created_at=job.created_at,
         updated_at=job.updated_at,
         progress=progress,
         error_message=job.error_message,
         result_file_path=str(job.result_file) if job.result_file else None,
+        estimated_duration_seconds=job.estimated_duration_seconds,
+        elapsed_seconds=job.elapsed_seconds,
+        youtube_thumbnail=job.youtube_thumbnail,
+        youtube_duration=job.youtube_duration,
+        youtube_channel=job.youtube_channel,
+        queue_position=queue_position,
         is_duet=job.is_duet,
         speaker_1_name=job.speaker_1_name,
         speaker_2_name=job.speaker_2_name,

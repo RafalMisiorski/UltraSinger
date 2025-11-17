@@ -63,4 +63,15 @@ export const downloadResult = (jobId, fileType = 'main') => {
   return `${API_BASE_URL}/api/jobs/${jobId}/download?file_type=${fileType}`
 }
 
+export const downloadZip = (jobId) => {
+  return `${API_BASE_URL}/api/jobs/${jobId}/download-zip`
+}
+
+export const getYouTubePreview = async (url) => {
+  const response = await api.get('/api/youtube/preview', {
+    params: { url },
+  })
+  return response.data
+}
+
 export default api

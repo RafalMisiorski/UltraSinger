@@ -45,6 +45,7 @@ class CreateJobRequest(BaseModel):
     language: str = Field(..., description="Language code: it, en, or pl")
     quality: QualityPreset = QualityPreset.BALANCED
     manual_lyrics: Optional[str] = None
+    custom_name: Optional[str] = Field(None, description="Custom name for this job")
     # Duet mode fields
     is_duet: bool = False
     speaker_1_name: Optional[str] = None
@@ -88,11 +89,21 @@ class JobResponse(BaseModel):
     language: str
     quality: QualityPreset
     title: Optional[str] = None
+    custom_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     progress: Optional[JobProgress] = None
     error_message: Optional[str] = None
     result_file_path: Optional[str] = None
+    # Time estimates
+    estimated_duration_seconds: Optional[int] = None
+    elapsed_seconds: Optional[float] = None
+    # YouTube metadata
+    youtube_thumbnail: Optional[str] = None
+    youtube_duration: Optional[int] = None
+    youtube_channel: Optional[str] = None
+    # Queue info
+    queue_position: Optional[int] = None
     # Duet mode fields
     is_duet: bool = False
     speaker_1_name: Optional[str] = None

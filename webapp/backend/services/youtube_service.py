@@ -97,10 +97,21 @@ async def get_video_info(url: str) -> dict:
             url,
             ydl_opts
         )
+
+        # Get the best quality thumbnail
+        thumbnail = None
+        if info.get("thumbnails"):
+            # Get highest quality thumbnail
+            thumbnail = info["thumbnails"][-1]["url"]
+        elif info.get("thumbnail"):
+            thumbnail = info.get("thumbnail")
+
         return {
             "title": info.get("title", "Unknown"),
             "duration": info.get("duration", 0),
             "uploader": info.get("uploader", "Unknown"),
+            "channel": info.get("channel", info.get("uploader", "Unknown")),
+            "thumbnail": thumbnail,
         }
     except Exception as e:
         logger.error(f"Failed to get video info: {e}")
