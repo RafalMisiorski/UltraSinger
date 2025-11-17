@@ -46,6 +46,10 @@ class CreateJobRequest(BaseModel):
     quality: QualityPreset = QualityPreset.BALANCED
     manual_lyrics: Optional[str] = None
     custom_name: Optional[str] = Field(None, description="Custom name for this job")
+    # Advanced settings (override quality preset)
+    whisper_model: Optional[str] = Field(None, description="Whisper model: tiny, base, small, medium, large")
+    crepe_model: Optional[str] = Field(None, description="Crepe model: tiny, medium, full")
+    force_cpu: Optional[bool] = Field(None, description="Force CPU processing (disable GPU)")
     # Duet mode fields
     is_duet: bool = False
     speaker_1_name: Optional[str] = None

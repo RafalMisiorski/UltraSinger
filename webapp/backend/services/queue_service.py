@@ -39,6 +39,10 @@ class Job:
     progress_percentage: int = 0
     progress_message: str = ""
     elapsed_seconds: float = 0.0
+    # Advanced settings
+    whisper_model: Optional[str] = None
+    crepe_model: Optional[str] = None
+    force_cpu: Optional[bool] = None
     # Time estimates
     estimated_duration_seconds: Optional[int] = None
     # YouTube metadata
@@ -87,6 +91,9 @@ class JobQueue:
         youtube_url: Optional[str] = None,
         upload_filename: Optional[str] = None,
         custom_name: Optional[str] = None,
+        whisper_model: Optional[str] = None,
+        crepe_model: Optional[str] = None,
+        force_cpu: Optional[bool] = None,
         is_duet: bool = False,
         speaker_1_name: Optional[str] = None,
         speaker_2_name: Optional[str] = None,
@@ -103,6 +110,9 @@ class JobQueue:
             youtube_url=youtube_url,
             upload_filename=upload_filename,
             custom_name=custom_name,
+            whisper_model=whisper_model,
+            crepe_model=crepe_model,
+            force_cpu=force_cpu,
             is_duet=is_duet,
             speaker_1_name=speaker_1_name or "Player 1",
             speaker_2_name=speaker_2_name or "Player 2",
@@ -210,6 +220,9 @@ class JobQueue:
             youtube_url=old_job.youtube_url,
             upload_filename=old_job.upload_filename,
             custom_name=old_job.custom_name,
+            whisper_model=old_job.whisper_model,
+            crepe_model=old_job.crepe_model,
+            force_cpu=old_job.force_cpu,
             is_duet=old_job.is_duet,
             speaker_1_name=old_job.speaker_1_name,
             speaker_2_name=old_job.speaker_2_name,
@@ -276,8 +289,8 @@ class JobQueue:
                     # Broadcast to websockets
                     asyncio.create_task(self._broadcast_progress(job_id, job))
 
-                # Get quality settings
-                whisper_model, crepe_model = self._get_quality_settings(job.quality)
+                # Get quality settings (with custom overrides if provided)
+                whisper_model, crepe_model, force_cpu = self._get_quality_settings(job)
 
                 # Step 1: Get input file
                 if job.source == JobSource.YOUTUBE:
@@ -386,7 +399,7 @@ class JobQueue:
                             language=job.language,
                             whisper_model=whisper_model,
                             crepe_model=crepe_model,
-                            force_cpu=settings.force_cpu,
+                            force_cpu=force_cpu,
                             ultrasinger_src_path=settings.ultrasinger_src_path,
                             progress_callback=speaker_1_progress,
                         )
@@ -408,7 +421,7 @@ class JobQueue:
                             language=job.language,
                             whisper_model=whisper_model,
                             crepe_model=crepe_model,
-                            force_cpu=settings.force_cpu,
+                            force_cpu=force_cpu,
                             ultrasinger_src_path=settings.ultrasinger_src_path,
                             progress_callback=speaker_2_progress,
                         )
@@ -450,7 +463,7 @@ class JobQueue:
                         language=job.language,
                         whisper_model=whisper_model,
                         crepe_model=crepe_model,
-                        force_cpu=settings.force_cpu,
+                        force_cpu=force_cpu,
                         ultrasinger_src_path=settings.ultrasinger_src_path,
                         progress_callback=us_progress,
                     )
@@ -486,14 +499,29 @@ class JobQueue:
                 # Clean up task
                 self.processing_tasks.pop(job_id, None)
 
-    def _get_quality_settings(self, quality: QualityPreset) -> tuple[str, str]:
-        """Get whisper and crepe model for quality preset"""
-        quality_map = {
-            QualityPreset.FAST: ("tiny", "tiny"),
-            QualityPreset.BALANCED: ("small", "medium"),
-            QualityPreset.ACCURATE: ("medium", "full"),
-        }
-        return quality_map[quality]
+    def _get_quality_settings(self, job: Job) -> tuple[str, str, bool]:
+        """
+        Get whisper model, crepe model, and force_cpu setting for a job
+
+        Returns:
+            (whisper_model, crepe_model, force_cpu)
+        """
+        # Use custom settings if provided, otherwise use quality preset defaults
+        if job.whisper_model and job.crepe_model:
+            whisper_model = job.whisper_model
+            crepe_model = job.crepe_model
+        else:
+            quality_map = {
+                QualityPreset.FAST: ("tiny", "tiny"),
+                QualityPreset.BALANCED: ("small", "medium"),
+                QualityPreset.ACCURATE: ("medium", "full"),
+            }
+            whisper_model, crepe_model = quality_map[job.quality]
+
+        # Use custom force_cpu if provided, otherwise use settings default
+        force_cpu = job.force_cpu if job.force_cpu is not None else settings.force_cpu
+
+        return whisper_model, crepe_model, force_cpu
 
     async def _cleanup_old_jobs(self):
         """Periodically clean up old jobs"""

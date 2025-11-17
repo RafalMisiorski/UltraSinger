@@ -146,6 +146,85 @@
       </div>
     </div>
 
+    <!-- Advanced Settings -->
+    <div class="mb-6">
+      <button
+        @click="showAdvanced = !showAdvanced"
+        type="button"
+        class="flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
+      >
+        <svg
+          class="w-5 h-5 transition-transform"
+          :class="{ 'rotate-90': showAdvanced }"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+        </svg>
+        <span class="font-medium">Advanced Settings</span>
+        <span class="text-xs text-gray-500">(optional - for power users)</span>
+      </button>
+
+      <transition name="slide-down">
+        <div v-if="showAdvanced" class="glass p-4 rounded-lg mt-4 space-y-4">
+          <!-- Whisper Model Selection -->
+          <div>
+            <label class="block text-sm font-medium mb-2">Whisper Model (Speech Recognition)</label>
+            <select v-model="whisperModel" class="input">
+              <option value="">Auto (from quality preset)</option>
+              <option value="tiny">Tiny - Fastest, ~1GB VRAM</option>
+              <option value="base">Base - Fast, ~1GB VRAM</option>
+              <option value="small">Small - Balanced, ~2GB VRAM</option>
+              <option value="medium">Medium - Good, ~5GB VRAM (Recommended for 8GB)</option>
+              <option value="large">Large - Best, ~10GB VRAM (tight fit for 8GB)</option>
+            </select>
+          </div>
+
+          <!-- Crepe Model Selection -->
+          <div>
+            <label class="block text-sm font-medium mb-2">Crepe Model (Pitch Detection)</label>
+            <select v-model="crepeModel" class="input">
+              <option value="">Auto (from quality preset)</option>
+              <option value="tiny">Tiny - Fastest</option>
+              <option value="medium">Medium - Balanced</option>
+              <option value="full">Full - Most accurate</option>
+            </select>
+          </div>
+
+          <!-- Force CPU Toggle -->
+          <div class="flex items-center gap-3">
+            <input
+              id="force-cpu"
+              type="checkbox"
+              v-model="forceCPU"
+              class="w-5 h-5 rounded border-gray-600 bg-gray-700 text-primary-600 focus:ring-2 focus:ring-primary-500"
+            />
+            <label for="force-cpu" class="text-sm">
+              <span class="font-medium">Force CPU Processing</span>
+              <span class="text-gray-500 block text-xs mt-1">Disable GPU to save VRAM (slower but works with any hardware)</span>
+            </label>
+          </div>
+
+          <!-- Info Box -->
+          <div class="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 flex gap-3">
+            <svg class="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div class="text-sm text-blue-300">
+              <p class="font-medium mb-1">Your Hardware (i9, 64GB RAM, 8GB VRAM):</p>
+              <ul class="list-disc list-inside space-y-1 text-blue-200 text-xs">
+                <li><strong>Medium</strong> whisper recommended (best quality for 8GB VRAM)</li>
+                <li><strong>Full</strong> crepe for maximum pitch accuracy</li>
+                <li>GPU enabled for ~2-3x faster processing</li>
+                <li>Force CPU if you need VRAM for other tasks</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </transition>
+    </div>
+
     <!-- Duet Mode Toggle -->
     <div class="mb-6">
       <div class="flex items-center gap-3 mb-4">
@@ -247,6 +326,11 @@ const isDragging = ref(false)
 const isSubmitting = ref(false)
 const errors = ref({})
 const fileInput = ref(null)
+// Advanced settings
+const showAdvanced = ref(false)
+const whisperModel = ref('')
+const crepeModel = ref('')
+const forceCPU = ref(false)
 // Duet mode
 const isDuetMode = ref(false)
 const speaker1Name = ref('')
@@ -335,6 +419,11 @@ const handleSubmit = async () => {
       youtube_url: sourceType.value === 'youtube' ? youtubeUrl.value : null,
       upload_filename: uploadFilename,
       custom_name: customName.value || null,
+      // Advanced settings (only send if set)
+      whisper_model: whisperModel.value || null,
+      crepe_model: crepeModel.value || null,
+      force_cpu: forceCPU.value || null,
+      // Duet settings
       is_duet: isDuetMode.value,
       speaker_1_name: speaker1Name.value || null,
       speaker_2_name: speaker2Name.value || null,
@@ -347,6 +436,9 @@ const handleSubmit = async () => {
     youtubeUrl.value = ''
     selectedFile.value = null
     customName.value = ''
+    whisperModel.value = ''
+    crepeModel.value = ''
+    forceCPU.value = false
     speaker1Name.value = ''
     speaker2Name.value = ''
     isDuetMode.value = false
