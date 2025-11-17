@@ -192,6 +192,16 @@
         Cancel
       </button>
       <button
+        v-if="job.status === 'failed' || job.status === 'cancelled'"
+        @click="$emit('retry', job.job_id)"
+        class="btn bg-blue-600 hover:bg-blue-700 text-white flex-1"
+      >
+        <svg class="w-4 h-4 mr-1 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+        </svg>
+        Retry
+      </button>
+      <button
         @click="$emit('delete', job.job_id)"
         class="btn bg-red-600 hover:bg-red-700 text-white flex-1"
       >
@@ -213,7 +223,7 @@ const props = defineProps({
   },
 })
 
-defineEmits(['cancel', 'delete'])
+defineEmits(['cancel', 'delete', 'retry'])
 
 const { progress } = useWebSocket(props.job.job_id)
 

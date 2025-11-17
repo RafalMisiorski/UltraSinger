@@ -9,13 +9,37 @@
       </button>
     </div>
 
+    <!-- Status Filter Tabs -->
+    <div class="flex flex-wrap gap-2 mb-6">
+      <button
+        v-for="filter in statusFilters"
+        :key="filter.value"
+        @click="selectedFilter = filter.value"
+        :class="[
+          'btn px-4 py-2 text-sm',
+          selectedFilter === filter.value ? 'btn-primary' : 'btn-secondary'
+        ]"
+      >
+        {{ filter.label }}
+        <span
+          v-if="filter.count > 0"
+          :class="[
+            'ml-2 px-2 py-0.5 rounded-full text-xs font-bold',
+            selectedFilter === filter.value ? 'bg-white/20' : 'bg-primary-500/20 text-primary-400'
+          ]"
+        >
+          {{ filter.count }}
+        </span>
+      </button>
+    </div>
+
     <!-- Loading State -->
     <div v-if="isLoading && jobs.length === 0" class="space-y-4">
       <div v-for="i in 3" :key="i" class="card p-6 animate-shimmer"></div>
     </div>
 
     <!-- Empty State -->
-    <div v-else-if="jobs.length === 0" class="card p-12 text-center">
+    <div v-else-if="filteredJobs.length === 0 && jobs.length === 0" class="card p-12 text-center">
       <svg class="mx-auto h-16 w-16 text-gray-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
       </svg>
@@ -23,27 +47,80 @@
       <p class="text-gray-400">Create your first karaoke file using the form above!</p>
     </div>
 
+    <!-- No Results for Filter -->
+    <div v-else-if="filteredJobs.length === 0" class="card p-12 text-center">
+      <svg class="mx-auto h-16 w-16 text-gray-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+      </svg>
+      <h3 class="text-xl font-bold mb-2">No {{ selectedFilter }} jobs</h3>
+      <p class="text-gray-400">Try selecting a different filter</p>
+    </div>
+
     <!-- Jobs List -->
     <div v-else class="space-y-4">
       <ProgressCard
-        v-for="job in jobs"
+        v-for="job in filteredJobs"
         :key="job.job_id"
         :job="job"
         @cancel="handleCancel"
         @delete="handleDelete"
+        @retry="handleRetry"
       />
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import ProgressCard from './ProgressCard.vue'
-import { listJobs, cancelJob, deleteJob } from '@/services/api'
+import { listJobs, cancelJob, deleteJob, retryJob } from '@/services/api'
 
 const jobs = ref([])
 const isLoading = ref(false)
+const selectedFilter = ref('all')
 let refreshInterval = null
+
+// Computed: Job counts by status
+const jobCounts = computed(() => {
+  const counts = {
+    all: jobs.value.length,
+    queued: 0,
+    processing: 0,
+    completed: 0,
+    failed: 0,
+    cancelled: 0,
+  }
+
+  jobs.value.forEach(job => {
+    if (counts[job.status] !== undefined) {
+      counts[job.status]++
+    }
+  })
+
+  return counts
+})
+
+// Computed: Filter options with counts
+const statusFilters = computed(() => [
+  { value: 'all', label: 'All', count: jobCounts.value.all },
+  { value: 'processing', label: 'Active', count: jobCounts.value.queued + jobCounts.value.processing },
+  { value: 'completed', label: 'Completed', count: jobCounts.value.completed },
+  { value: 'failed', label: 'Failed', count: jobCounts.value.failed },
+  { value: 'cancelled', label: 'Cancelled', count: jobCounts.value.cancelled },
+])
+
+// Computed: Filtered jobs
+const filteredJobs = computed(() => {
+  if (selectedFilter.value === 'all') {
+    return jobs.value
+  }
+
+  if (selectedFilter.value === 'processing') {
+    return jobs.value.filter(job => job.status === 'queued' || job.status === 'processing')
+  }
+
+  return jobs.value.filter(job => job.status === selectedFilter.value)
+})
 
 const refreshJobs = async () => {
   isLoading.value = true
@@ -64,6 +141,18 @@ const handleCancel = async (jobId) => {
   } catch (error) {
     console.error('Failed to cancel job:', error)
     alert('Failed to cancel job')
+  }
+}
+
+const handleRetry = async (jobId) => {
+  try {
+    await retryJob(jobId)
+    await refreshJobs()
+    // Switch to "Active" filter to see the new job
+    selectedFilter.value = 'processing'
+  } catch (error) {
+    console.error('Failed to retry job:', error)
+    alert('Failed to retry job: ' + (error.response?.data?.detail || error.message))
   }
 }
 

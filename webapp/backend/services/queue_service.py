@@ -154,6 +154,38 @@ class JobQueue:
         logger.info(f"Deleted job {job_id}")
         return True
 
+    def retry_job(self, job_id: str) -> Optional[str]:
+        """
+        Retry a failed or cancelled job by creating a new job with the same parameters
+
+        Returns:
+            New job ID if successful, None if job cannot be retried
+        """
+        old_job = self.jobs.get(job_id)
+        if not old_job:
+            logger.warning(f"Cannot retry job {job_id}: not found")
+            return None
+
+        # Only allow retry for failed or cancelled jobs
+        if old_job.status not in (JobStatus.FAILED, JobStatus.CANCELLED):
+            logger.warning(f"Cannot retry job {job_id}: status is {old_job.status}")
+            return None
+
+        # Create new job with same parameters
+        new_job_id = self.create_job(
+            source=old_job.source,
+            language=old_job.language,
+            quality=old_job.quality,
+            youtube_url=old_job.youtube_url,
+            upload_filename=old_job.upload_filename,
+            is_duet=old_job.is_duet,
+            speaker_1_name=old_job.speaker_1_name,
+            speaker_2_name=old_job.speaker_2_name,
+        )
+
+        logger.info(f"Retrying job {job_id} as new job {new_job_id}")
+        return new_job_id
+
     async def register_websocket(self, job_id: str, websocket):
         """Register a websocket for job updates"""
         if job_id not in self.websocket_connections:

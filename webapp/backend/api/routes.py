@@ -134,6 +134,20 @@ async def cancel_job(job_id: str):
     return {"message": "Job cancelled successfully"}
 
 
+@router.post("/jobs/{job_id}/retry")
+async def retry_job(job_id: str):
+    """Retry a failed or cancelled job"""
+    new_job_id = job_queue.retry_job(job_id)
+    if not new_job_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Job not found or cannot be retried (must be in failed or cancelled status)"
+        )
+
+    new_job = job_queue.get_job(new_job_id)
+    return _job_to_response(new_job)
+
+
 @router.get("/jobs/{job_id}/download")
 async def download_result(job_id: str, file_type: str = "main"):
     """

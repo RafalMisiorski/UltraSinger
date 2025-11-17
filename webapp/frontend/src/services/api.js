@@ -49,6 +49,11 @@ export const cancelJob = async (jobId) => {
   return response.data
 }
 
+export const retryJob = async (jobId) => {
+  const response = await api.post(`/api/jobs/${jobId}/retry`)
+  return response.data
+}
+
 export const deleteJob = async (jobId) => {
   const response = await api.delete(`/api/jobs/${jobId}`)
   return response.data
