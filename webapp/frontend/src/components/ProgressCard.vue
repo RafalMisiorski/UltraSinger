@@ -171,6 +171,77 @@
           Download All Files (ZIP)
         </a>
       </div>
+
+      <!-- Preview & Export Options -->
+      <div class="mt-4 p-4 bg-gray-800/50 rounded-lg border border-gray-700">
+        <h4 class="text-sm font-bold mb-3 text-gray-300 flex items-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8.5V8a4 4 0 10-8 0v7.5m14 0h-3m-9 0H2m9-1.5h.01" />
+          </svg>
+          Preview & Export
+        </h4>
+
+        <!-- Preview Button -->
+        <button
+          @click="$emit('preview', job.job_id)"
+          class="btn bg-gray-700 hover:bg-gray-600 text-white w-full mb-3"
+        >
+          <svg class="w-4 h-4 mr-2 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+          </svg>
+          Preview Result
+        </button>
+
+        <!-- Export Format Buttons -->
+        <div class="text-xs text-gray-400 mb-2">Export as:</div>
+        <div class="grid grid-cols-2 gap-2">
+          <a
+            :href="exportUrl('srt')"
+            download
+            class="btn btn-secondary text-xs py-2"
+            title="SubRip subtitle format"
+          >
+            <svg class="w-3 h-3 mr-1 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+            </svg>
+            SRT
+          </a>
+          <a
+            :href="exportUrl('lrc')"
+            download
+            class="btn btn-secondary text-xs py-2"
+            title="LRC lyrics format"
+          >
+            <svg class="w-3 h-3 mr-1 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+            </svg>
+            LRC
+          </a>
+          <a
+            :href="exportUrl('json')"
+            download
+            class="btn btn-secondary text-xs py-2"
+            title="JSON structured data"
+          >
+            <svg class="w-3 h-3 mr-1 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+            </svg>
+            JSON
+          </a>
+          <a
+            :href="exportUrl('txt')"
+            download
+            class="btn btn-secondary text-xs py-2"
+            title="Plain text lyrics"
+          >
+            <svg class="w-3 h-3 mr-1 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            TXT
+          </a>
+        </div>
+      </div>
     </div>
 
     <!-- Error State -->
@@ -236,7 +307,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useWebSocket } from '@/composables/useWebSocket'
-import { downloadResult, downloadZip } from '@/services/api'
+import { downloadResult, downloadZip, exportResult } from '@/services/api'
 import { formatDuration, formatTimeRemaining } from '@/utils/time'
 
 const props = defineProps({
@@ -246,7 +317,7 @@ const props = defineProps({
   },
 })
 
-defineEmits(['cancel', 'delete', 'retry'])
+defineEmits(['cancel', 'delete', 'retry', 'preview'])
 
 const { progress } = useWebSocket(props.job.job_id)
 
@@ -348,4 +419,8 @@ const downloadSolo2Url = computed(() => {
 const downloadZipUrl = computed(() => {
   return downloadZip(props.job.job_id)
 })
+
+const exportUrl = (format) => {
+  return exportResult(props.job.job_id, format)
+}
 </script>

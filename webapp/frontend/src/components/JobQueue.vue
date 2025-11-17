@@ -65,14 +65,24 @@
         @cancel="handleCancel"
         @delete="handleDelete"
         @retry="handleRetry"
+        @preview="handlePreview"
       />
     </div>
+
+    <!-- Preview Modal -->
+    <PreviewModal
+      :show="showPreview"
+      :job-id="selectedJobId"
+      :title="selectedJobTitle"
+      @close="closePreview"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import ProgressCard from './ProgressCard.vue'
+import PreviewModal from './PreviewModal.vue'
 import { listJobs, cancelJob, deleteJob, retryJob } from '@/services/api'
 import { requestNotificationPermission, notifyJobComplete } from '@/utils/notifications'
 
@@ -80,6 +90,9 @@ const jobs = ref([])
 const isLoading = ref(false)
 const selectedFilter = ref('all')
 const previousJobStatuses = ref({})
+const showPreview = ref(false)
+const selectedJobId = ref(null)
+const selectedJobTitle = ref('')
 let refreshInterval = null
 
 // Computed: Job counts by status
@@ -170,6 +183,21 @@ const handleDelete = async (jobId) => {
     console.error('Failed to delete job:', error)
     alert('Failed to delete job')
   }
+}
+
+const handlePreview = (jobId) => {
+  const job = jobs.value.find(j => j.job_id === jobId)
+  if (job) {
+    selectedJobId.value = jobId
+    selectedJobTitle.value = job.custom_name || job.title || 'Job Result'
+    showPreview.value = true
+  }
+}
+
+const closePreview = () => {
+  showPreview.value = false
+  selectedJobId.value = null
+  selectedJobTitle.value = ''
 }
 
 // Watch for job status changes and notify

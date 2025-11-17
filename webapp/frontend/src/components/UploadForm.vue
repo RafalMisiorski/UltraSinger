@@ -24,6 +24,25 @@
       </button>
     </div>
 
+    <!-- Batch Mode Toggle (only for upload) -->
+    <div v-if="sourceType === 'upload'" class="mb-6 flex items-center gap-3 p-4 bg-purple-500/10 border border-purple-500/30 rounded-lg">
+      <input
+        id="batch-mode"
+        type="checkbox"
+        v-model="batchMode"
+        class="rounded"
+      />
+      <label for="batch-mode" class="flex-1 cursor-pointer">
+        <span class="font-medium text-purple-300">Batch Processing Mode</span>
+        <span class="text-sm text-purple-200 block mt-1">
+          Upload and process multiple files at once with the same settings
+        </span>
+      </label>
+      <svg class="w-6 h-6 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+      </svg>
+    </div>
+
     <!-- Custom Job Name (Optional) -->
     <div class="mb-6">
       <label class="block text-sm font-medium mb-2">
@@ -56,7 +75,12 @@
 
     <!-- File Upload -->
     <div v-if="sourceType === 'upload'" class="mb-6">
-      <label class="block text-sm font-medium mb-2">Audio File</label>
+      <label class="block text-sm font-medium mb-2">
+        Audio {{ batchMode ? 'Files' : 'File' }}
+        <span v-if="batchMode && selectedFiles.length > 0" class="text-purple-400 ml-2">
+          ({{ selectedFiles.length }} selected)
+        </span>
+      </label>
       <div
         @drop.prevent="handleDrop"
         @dragover.prevent="isDragging = true"
@@ -71,11 +95,12 @@
           ref="fileInput"
           type="file"
           accept=".mp3,.wav,.ogg,.m4a,.flac"
+          :multiple="batchMode"
           @change="handleFileSelect"
           class="hidden"
         />
 
-        <div v-if="!selectedFile">
+        <div v-if="!batchMode && !selectedFile">
           <svg class="mx-auto h-12 w-12 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
           </svg>
@@ -86,7 +111,7 @@
           <p class="text-sm text-gray-500 mt-2">Supported: MP3, WAV, OGG, M4A, FLAC</p>
         </div>
 
-        <div v-else class="flex items-center justify-between">
+        <div v-else-if="!batchMode && selectedFile" class="flex items-center justify-between">
           <div class="flex items-center gap-3">
             <svg class="h-8 w-8 text-primary-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
@@ -101,6 +126,45 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
+        </div>
+
+        <!-- Batch Mode File List -->
+        <div v-else-if="batchMode">
+          <div v-if="selectedFiles.length === 0">
+            <svg class="mx-auto h-12 w-12 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+            </svg>
+            <p class="text-gray-400 mb-2">Drag and drop multiple audio files here, or</p>
+            <button @click="$refs.fileInput.click()" class="btn btn-primary">
+              Browse Files
+            </button>
+            <p class="text-sm text-gray-500 mt-2">Supported: MP3, WAV, OGG, M4A, FLAC</p>
+          </div>
+          <div v-else class="space-y-2">
+            <div
+              v-for="(file, index) in selectedFiles"
+              :key="index"
+              class="flex items-center justify-between p-3 bg-gray-800 rounded-lg"
+            >
+              <div class="flex items-center gap-3">
+                <svg class="h-6 w-6 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                </svg>
+                <div class="text-left">
+                  <p class="font-medium text-sm">{{ file.name }}</p>
+                  <p class="text-xs text-gray-400">{{ formatFileSize(file.size) }}</p>
+                </div>
+              </div>
+              <button @click="removeFile(index)" class="text-red-400 hover:text-red-300">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <button @click="$refs.fileInput.click()" class="btn btn-secondary w-full mt-2 text-sm">
+              + Add More Files
+            </button>
+          </div>
         </div>
       </div>
       <p v-if="errors.file" class="text-red-400 text-sm mt-1">
@@ -296,7 +360,7 @@
       :class="{ 'opacity-50 cursor-not-allowed': isSubmitting }"
     >
       <span v-if="!isSubmitting">
-        Generate Karaoke File
+        {{ batchMode && selectedFiles.length > 0 ? `Process All ${selectedFiles.length} Files` : 'Generate Karaoke File' }}
         <span class="text-xs opacity-75 ml-2">(Ctrl+Enter)</span>
       </span>
       <span v-else class="flex items-center justify-center gap-2">
@@ -304,7 +368,7 @@
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
         </svg>
-        Processing...
+        {{ batchMode ? 'Processing batch...' : 'Processing...' }}
       </span>
     </button>
   </div>
@@ -312,13 +376,15 @@
 
 <script setup>
 import { ref } from 'vue'
-import { uploadFile, createJob } from '@/services/api'
+import { uploadFile, uploadBatch, createJob } from '@/services/api'
 
 const emit = defineEmits(['job-created'])
 
 const sourceType = ref('youtube')
 const youtubeUrl = ref('')
 const selectedFile = ref(null)
+const selectedFiles = ref([])
+const batchMode = ref(false)
 const customName = ref('')
 const selectedLanguage = ref('en')
 const selectedQuality = ref('balanced')
@@ -349,20 +415,36 @@ const qualityPresets = [
 ]
 
 const handleFileSelect = (event) => {
-  const file = event.target.files[0]
-  if (file) {
-    selectedFile.value = file
+  if (batchMode.value) {
+    const files = Array.from(event.target.files)
+    selectedFiles.value.push(...files)
     errors.value.file = null
+  } else {
+    const file = event.target.files[0]
+    if (file) {
+      selectedFile.value = file
+      errors.value.file = null
+    }
   }
 }
 
 const handleDrop = (event) => {
   isDragging.value = false
-  const file = event.dataTransfer.files[0]
-  if (file) {
-    selectedFile.value = file
+  if (batchMode.value) {
+    const files = Array.from(event.dataTransfer.files)
+    selectedFiles.value.push(...files)
     errors.value.file = null
+  } else {
+    const file = event.dataTransfer.files[0]
+    if (file) {
+      selectedFile.value = file
+      errors.value.file = null
+    }
   }
+}
+
+const removeFile = (index) => {
+  selectedFiles.value.splice(index, 1)
 }
 
 const formatFileSize = (bytes) => {
@@ -388,9 +470,16 @@ const validateForm = () => {
       return false
     }
   } else {
-    if (!selectedFile.value) {
-      errors.value.file = 'Please select an audio file'
-      return false
+    if (batchMode.value) {
+      if (selectedFiles.value.length === 0) {
+        errors.value.file = 'Please select at least one audio file'
+        return false
+      }
+    } else {
+      if (!selectedFile.value) {
+        errors.value.file = 'Please select an audio file'
+        return false
+      }
     }
   }
 
@@ -403,38 +492,80 @@ const handleSubmit = async () => {
   isSubmitting.value = true
 
   try {
-    let uploadFilename = null
+    // Batch mode: upload all files and create jobs
+    if (batchMode.value && sourceType.value === 'upload') {
+      const batchResponse = await uploadBatch(selectedFiles.value)
 
-    // Upload file if source is upload
-    if (sourceType.value === 'upload') {
-      const uploadResponse = await uploadFile(selectedFile.value)
-      uploadFilename = uploadResponse.filename
+      // Create a job for each successfully uploaded file
+      const jobPromises = batchResponse.uploaded.map(uploadedFile => {
+        const jobData = {
+          source: 'upload',
+          language: selectedLanguage.value,
+          quality: selectedQuality.value,
+          youtube_url: null,
+          upload_filename: uploadedFile.filename,
+          custom_name: customName.value ? `${customName.value} - ${uploadedFile.filename}` : null,
+          // Advanced settings
+          whisper_model: whisperModel.value || null,
+          crepe_model: crepeModel.value || null,
+          force_cpu: forceCPU.value || null,
+          // Duet settings
+          is_duet: isDuetMode.value,
+          speaker_1_name: speaker1Name.value || null,
+          speaker_2_name: speaker2Name.value || null,
+        }
+        return createJob(jobData)
+      })
+
+      const jobs = await Promise.all(jobPromises)
+
+      // Emit all created jobs
+      jobs.forEach(job => emit('job-created', job))
+
+      // Show summary
+      alert(`✅ Successfully created ${jobs.length} job(s)!\n${batchResponse.error_count > 0 ? `⚠️ ${batchResponse.error_count} file(s) failed to upload` : ''}`)
+
+      // Reset form
+      selectedFiles.value = []
+      batchMode.value = false
+
+    } else {
+      // Single file mode
+      let uploadFilename = null
+
+      // Upload file if source is upload
+      if (sourceType.value === 'upload') {
+        const uploadResponse = await uploadFile(selectedFile.value)
+        uploadFilename = uploadResponse.filename
+      }
+
+      // Create job
+      const jobData = {
+        source: sourceType.value,
+        language: selectedLanguage.value,
+        quality: selectedQuality.value,
+        youtube_url: sourceType.value === 'youtube' ? youtubeUrl.value : null,
+        upload_filename: uploadFilename,
+        custom_name: customName.value || null,
+        // Advanced settings (only send if set)
+        whisper_model: whisperModel.value || null,
+        crepe_model: crepeModel.value || null,
+        force_cpu: forceCPU.value || null,
+        // Duet settings
+        is_duet: isDuetMode.value,
+        speaker_1_name: speaker1Name.value || null,
+        speaker_2_name: speaker2Name.value || null,
+      }
+
+      const job = await createJob(jobData)
+      emit('job-created', job)
+
+      // Reset form
+      youtubeUrl.value = ''
+      selectedFile.value = null
     }
 
-    // Create job
-    const jobData = {
-      source: sourceType.value,
-      language: selectedLanguage.value,
-      quality: selectedQuality.value,
-      youtube_url: sourceType.value === 'youtube' ? youtubeUrl.value : null,
-      upload_filename: uploadFilename,
-      custom_name: customName.value || null,
-      // Advanced settings (only send if set)
-      whisper_model: whisperModel.value || null,
-      crepe_model: crepeModel.value || null,
-      force_cpu: forceCPU.value || null,
-      // Duet settings
-      is_duet: isDuetMode.value,
-      speaker_1_name: speaker1Name.value || null,
-      speaker_2_name: speaker2Name.value || null,
-    }
-
-    const job = await createJob(jobData)
-    emit('job-created', job)
-
-    // Reset form
-    youtubeUrl.value = ''
-    selectedFile.value = null
+    // Common reset
     customName.value = ''
     whisperModel.value = ''
     crepeModel.value = ''

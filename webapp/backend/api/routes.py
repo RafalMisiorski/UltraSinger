@@ -18,6 +18,7 @@ from api.models import (
 )
 from services.queue_service import job_queue
 from services.youtube_service import get_video_info
+from services.export_service import convert_to_srt, convert_to_lrc, convert_to_json, convert_to_txt
 from utils.config import settings
 from utils.validators import is_valid_youtube_url, is_valid_audio_file, sanitize_filename
 
@@ -58,6 +59,63 @@ async def upload_file(file: UploadFile = File(...)):
         size=len(content),
         upload_id=safe_filename,
     )
+
+
+@router.post("/upload/batch")
+async def upload_batch(files: list[UploadFile] = File(...)):
+    """Upload multiple audio files for batch processing"""
+    uploaded_files = []
+    errors = []
+
+    for file in files:
+        try:
+            # Validate file type
+            if not is_valid_audio_file(file.filename):
+                errors.append({
+                    "filename": file.filename,
+                    "error": "Invalid file type"
+                })
+                continue
+
+            # Sanitize filename
+            safe_filename = sanitize_filename(file.filename)
+
+            # Check file size
+            content = await file.read()
+            if len(content) > settings.max_file_size:
+                errors.append({
+                    "filename": file.filename,
+                    "error": f"File too large (max {settings.max_file_size / 1024 / 1024}MB)"
+                })
+                continue
+
+            # Save file
+            file_path = settings.upload_dir / safe_filename
+            with open(file_path, "wb") as f:
+                f.write(content)
+
+            logger.info(f"Batch uploaded: {safe_filename} ({len(content)} bytes)")
+
+            uploaded_files.append({
+                "filename": safe_filename,
+                "size": len(content),
+                "upload_id": safe_filename,
+            })
+
+        except Exception as e:
+            logger.error(f"Failed to upload {file.filename}: {e}")
+            errors.append({
+                "filename": file.filename,
+                "error": str(e)
+            })
+
+    return {
+        "uploaded": uploaded_files,
+        "errors": errors,
+        "total": len(files),
+        "success_count": len(uploaded_files),
+        "error_count": len(errors),
+    }
 
 
 @router.get("/youtube/preview")
@@ -268,6 +326,98 @@ async def download_all_as_zip(job_id: str):
     except Exception as e:
         logger.error(f"Failed to create ZIP for job {job_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to create ZIP archive")
+
+
+@router.get("/jobs/{job_id}/preview")
+async def preview_result(job_id: str):
+    """Get preview of job results (first 50 lines)"""
+    job = job_queue.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.status != JobStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="Job not completed yet")
+
+    if not job.result_file or not job.result_file.exists():
+        raise HTTPException(status_code=404, detail="Result file not found")
+
+    try:
+        # Read first 50 lines
+        with open(job.result_file, 'r', encoding='utf-8') as f:
+            lines = []
+            for i, line in enumerate(f):
+                if i >= 50:
+                    break
+                lines.append(line)
+
+        content = ''.join(lines)
+        total_lines = sum(1 for _ in open(job.result_file, 'r', encoding='utf-8'))
+
+        return {
+            "content": content,
+            "total_lines": total_lines,
+            "preview_lines": len(lines),
+            "is_complete": total_lines <= 50,
+        }
+    except Exception as e:
+        logger.error(f"Failed to preview job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to read result file")
+
+
+@router.get("/jobs/{job_id}/export")
+async def export_result(job_id: str, format: str = "srt"):
+    """
+    Export job result in different formats
+
+    Args:
+        job_id: Job ID
+        format: Export format - srt, lrc, json, txt
+    """
+    job = job_queue.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.status != JobStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="Job not completed yet")
+
+    if not job.result_file or not job.result_file.exists():
+        raise HTTPException(status_code=404, detail="Result file not found")
+
+    try:
+        # Convert based on format
+        if format == "srt":
+            content = convert_to_srt(job.result_file)
+            media_type = "application/x-subrip"
+            extension = "srt"
+        elif format == "lrc":
+            content = convert_to_lrc(job.result_file)
+            media_type = "text/plain"
+            extension = "lrc"
+        elif format == "json":
+            content = convert_to_json(job.result_file)
+            media_type = "application/json"
+            extension = "json"
+        elif format == "txt":
+            content = convert_to_txt(job.result_file)
+            media_type = "text/plain"
+            extension = "txt"
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported format: {format}. Use: srt, lrc, json, txt")
+
+        # Create filename
+        base_name = job.custom_name or job.title or "karaoke"
+        filename = f"{base_name}.{extension}".replace(" ", "_")
+
+        # Return as downloadable file
+        return StreamingResponse(
+            io.BytesIO(content.encode('utf-8')),
+            media_type=media_type,
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to export job {job_id} to {format}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to export to {format} format")
 
 
 @router.websocket("/ws/{job_id}")
