@@ -1,12 +1,17 @@
 <template>
   <div class="card p-6">
     <div class="flex items-center justify-between mb-4">
-      <h3 class="text-lg font-bold truncate flex-1">
-        {{ job.title || 'Processing...' }}
-      </h3>
+      <div class="flex-1 min-w-0">
+        <h3 class="text-lg font-bold truncate">
+          {{ displayName }}
+        </h3>
+        <p v-if="queueMessage" class="text-sm text-gray-400 mt-1">
+          {{ queueMessage }}
+        </p>
+      </div>
       <span
         :class="[
-          'px-3 py-1 rounded-full text-xs font-bold',
+          'px-3 py-1 rounded-full text-xs font-bold ml-3',
           statusColors[job.status]
         ]"
       >
@@ -20,13 +25,18 @@
         <span class="text-gray-400">{{ currentStepMessage }}</span>
         <span class="text-primary-400 font-bold">{{ progressPercentage }}%</span>
       </div>
-      <div class="w-full bg-gray-700 rounded-full h-2 overflow-hidden">
+      <div class="w-full bg-gray-700 rounded-full h-2 overflow-hidden mb-2">
         <div
           class="bg-gradient-to-r from-primary-500 to-primary-400 h-full transition-all duration-300 ease-out"
           :style="{ width: progressPercentage + '%' }"
         >
           <div class="w-full h-full animate-pulse-slow"></div>
         </div>
+      </div>
+      <!-- Time Information -->
+      <div class="flex justify-between text-xs text-gray-500">
+        <span v-if="elapsedTime">⏱️ {{ elapsedTime }} elapsed</span>
+        <span v-if="estimatedRemaining" class="text-primary-400">~{{ estimatedRemaining }} remaining</span>
       </div>
     </div>
 
@@ -148,6 +158,18 @@
             {{ job.speaker_2_name || 'Singer 2' }}
           </a>
         </div>
+
+        <!-- Download All as ZIP -->
+        <a
+          :href="downloadZipUrl"
+          download
+          class="btn bg-purple-600 hover:bg-purple-700 text-white w-full text-sm"
+        >
+          <svg class="w-4 h-4 mr-2 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+          </svg>
+          Download All Files (ZIP)
+        </a>
       </div>
     </div>
 
@@ -214,7 +236,8 @@
 <script setup>
 import { computed } from 'vue'
 import { useWebSocket } from '@/composables/useWebSocket'
-import { downloadResult } from '@/services/api'
+import { downloadResult, downloadZip } from '@/services/api'
+import { formatDuration, formatTimeRemaining } from '@/utils/time'
 
 const props = defineProps({
   job: {
@@ -249,6 +272,19 @@ const steps = [
   { key: 'generating', label: 'Generating file' },
 ]
 
+// Display name (custom name takes precedence)
+const displayName = computed(() => {
+  return props.job.custom_name || props.job.title || 'Processing...'
+})
+
+// Queue position message
+const queueMessage = computed(() => {
+  const pos = props.job.queue_position
+  if (pos === null || pos === undefined) return null
+  if (pos === 0) return '⚡ Currently processing'
+  return `📋 Position ${pos} in queue`
+})
+
 const currentStepMessage = computed(() => {
   if (progress.value?.message) {
     return progress.value.message
@@ -281,12 +317,16 @@ const getStepStatus = (stepKey) => {
 }
 
 const elapsedTime = computed(() => {
-  const seconds = progress.value?.elapsed_seconds || props.job.progress?.elapsed_seconds
-  if (!seconds) return null
+  const seconds = progress.value?.elapsed_seconds || props.job.progress?.elapsed_seconds || props.job.elapsed_seconds
+  return seconds ? formatDuration(seconds) : null
+})
 
-  const mins = Math.floor(seconds / 60)
-  const secs = Math.floor(seconds % 60)
-  return `${mins}:${secs.toString().padStart(2, '0')}`
+const estimatedRemaining = computed(() => {
+  const elapsed = progress.value?.elapsed_seconds || props.job.progress?.elapsed_seconds || props.job.elapsed_seconds
+  const estimated = props.job.estimated_duration_seconds
+
+  if (!estimated || !elapsed) return null
+  return formatTimeRemaining(estimated, elapsed)
 })
 
 const downloadUrl = computed(() => {
@@ -303,5 +343,9 @@ const downloadSolo1Url = computed(() => {
 
 const downloadSolo2Url = computed(() => {
   return downloadResult(props.job.job_id, 'solo2')
+})
+
+const downloadZipUrl = computed(() => {
+  return downloadZip(props.job.job_id)
 })
 </script>

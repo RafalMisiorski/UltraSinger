@@ -71,13 +71,15 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import ProgressCard from './ProgressCard.vue'
 import { listJobs, cancelJob, deleteJob, retryJob } from '@/services/api'
+import { requestNotificationPermission, notifyJobComplete } from '@/utils/notifications'
 
 const jobs = ref([])
 const isLoading = ref(false)
 const selectedFilter = ref('all')
+const previousJobStatuses = ref({})
 let refreshInterval = null
 
 // Computed: Job counts by status
@@ -170,7 +172,32 @@ const handleDelete = async (jobId) => {
   }
 }
 
-onMounted(() => {
+// Watch for job status changes and notify
+watch(jobs, (newJobs) => {
+  newJobs.forEach(job => {
+    const previousStatus = previousJobStatuses.value[job.job_id]
+    const currentStatus = job.status
+
+    // Detect completion or failure (only if status changed)
+    if (previousStatus && previousStatus !== currentStatus) {
+      if (currentStatus === 'completed') {
+        const jobName = job.custom_name || job.title || 'Job'
+        notifyJobComplete(jobName, true)
+      } else if (currentStatus === 'failed') {
+        const jobName = job.custom_name || job.title || 'Job'
+        notifyJobComplete(jobName, false)
+      }
+    }
+
+    // Update status tracking
+    previousJobStatuses.value[job.job_id] = currentStatus
+  })
+}, { deep: true })
+
+onMounted(async () => {
+  // Request notification permission
+  await requestNotificationPermission()
+
   refreshJobs()
   // Auto-refresh every 5 seconds
   refreshInterval = setInterval(refreshJobs, 5000)

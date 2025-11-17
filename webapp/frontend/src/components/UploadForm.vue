@@ -24,6 +24,20 @@
       </button>
     </div>
 
+    <!-- Custom Job Name (Optional) -->
+    <div class="mb-6">
+      <label class="block text-sm font-medium mb-2">
+        Job Name (optional)
+        <span class="text-gray-500 font-normal">- easier to track multiple jobs</span>
+      </label>
+      <input
+        v-model="customName"
+        type="text"
+        placeholder="e.g., John's Birthday Song, Wedding Duet..."
+        class="input"
+      />
+    </div>
+
     <!-- YouTube URL Input -->
     <div v-if="sourceType === 'youtube'" class="mb-6">
       <label class="block text-sm font-medium mb-2">YouTube URL</label>
@@ -33,6 +47,7 @@
         placeholder="https://www.youtube.com/watch?v=..."
         class="input"
         :class="{ 'border-red-500': errors.youtubeUrl }"
+        @keyup.enter="handleSubmit"
       />
       <p v-if="errors.youtubeUrl" class="text-red-400 text-sm mt-1">
         {{ errors.youtubeUrl }}
@@ -196,11 +211,15 @@
     <!-- Submit Button -->
     <button
       @click="handleSubmit"
+      @keydown.ctrl.enter="handleSubmit"
       :disabled="isSubmitting"
       class="btn btn-primary w-full py-3 text-lg font-bold"
       :class="{ 'opacity-50 cursor-not-allowed': isSubmitting }"
     >
-      <span v-if="!isSubmitting">Generate Karaoke File</span>
+      <span v-if="!isSubmitting">
+        Generate Karaoke File
+        <span class="text-xs opacity-75 ml-2">(Ctrl+Enter)</span>
+      </span>
       <span v-else class="flex items-center justify-center gap-2">
         <svg class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -221,6 +240,7 @@ const emit = defineEmits(['job-created'])
 const sourceType = ref('youtube')
 const youtubeUrl = ref('')
 const selectedFile = ref(null)
+const customName = ref('')
 const selectedLanguage = ref('en')
 const selectedQuality = ref('balanced')
 const isDragging = ref(false)
@@ -314,6 +334,7 @@ const handleSubmit = async () => {
       quality: selectedQuality.value,
       youtube_url: sourceType.value === 'youtube' ? youtubeUrl.value : null,
       upload_filename: uploadFilename,
+      custom_name: customName.value || null,
       is_duet: isDuetMode.value,
       speaker_1_name: speaker1Name.value || null,
       speaker_2_name: speaker2Name.value || null,
@@ -325,6 +346,10 @@ const handleSubmit = async () => {
     // Reset form
     youtubeUrl.value = ''
     selectedFile.value = null
+    customName.value = ''
+    speaker1Name.value = ''
+    speaker2Name.value = ''
+    isDuetMode.value = false
     errors.value = {}
 
   } catch (error) {
