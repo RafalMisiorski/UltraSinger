@@ -67,14 +67,28 @@ async def process_with_ultrasinger(
         if progress_callback:
             progress_callback("separating", "Initializing UltraSinger...", 0)
 
-        # Run in executor to avoid blocking
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            _run_ultrasinger_sync,
-            args,
-            progress_callback
-        )
+        # Start progress monitor if callback provided
+        monitor = None
+        monitor_task = None
+        if progress_callback:
+            monitor = UltrasingerProgressMonitor(output_dir, progress_callback)
+            monitor_task = asyncio.create_task(monitor.start())
+
+        try:
+            # Run in executor to avoid blocking
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                _run_ultrasinger_sync,
+                args,
+                None  # Don't pass callback - monitor handles it
+            )
+        finally:
+            # Stop monitor
+            if monitor:
+                monitor.stop()
+            if monitor_task:
+                await monitor_task
 
         # Find the generated .txt file
         txt_files = list(output_dir.glob("**/*.txt"))
@@ -131,25 +145,42 @@ class UltrasingerProgressMonitor:
         self.output_dir = output_dir
         self.progress_callback = progress_callback
         self._monitoring = False
+        self._reported_stages = set()
 
     async def start(self):
         """Start monitoring"""
         self._monitoring = True
+        self._reported_stages = set()
+
         while self._monitoring:
-            await asyncio.sleep(2)
+            await asyncio.sleep(1)  # Check every second for responsive updates
+
             # Check for cache files to determine progress
             cache_dir = self.output_dir / "cache"
             if cache_dir.exists():
-                if (cache_dir / "vocals.wav").exists():
-                    self.progress_callback("separating", "Vocals separated", 25)
-                if (cache_dir / "transcribed_data.json").exists():
-                    self.progress_callback("transcribing", "Transcription complete", 50)
-                if (cache_dir / "pitched_data.json").exists():
-                    self.progress_callback("pitching", "Pitch detection complete", 75)
+                # Stage 1: Vocal separation (0-25%)
+                if "vocals" not in self._reported_stages and (cache_dir / "vocals.wav").exists():
+                    self._reported_stages.add("vocals")
+                    self.progress_callback("separating", "Vocals separated successfully", 25)
+                    logger.debug("Progress: Vocals separated (25%)")
 
-            # Check for final output
-            if list(self.output_dir.glob("*.txt")):
-                self.progress_callback("generating", "File generation complete", 100)
+                # Stage 2: Transcription (25-60%)
+                if "transcription" not in self._reported_stages and (cache_dir / "transcribed_data.json").exists():
+                    self._reported_stages.add("transcription")
+                    self.progress_callback("transcribing", "Lyrics transcribed", 60)
+                    logger.debug("Progress: Transcription complete (60%)")
+
+                # Stage 3: Pitch detection (60-85%)
+                if "pitch" not in self._reported_stages and (cache_dir / "pitched_data.json").exists():
+                    self._reported_stages.add("pitch")
+                    self.progress_callback("pitching", "Pitch detection complete", 85)
+                    logger.debug("Progress: Pitch detection complete (85%)")
+
+            # Check for final output (85-95%)
+            if "output" not in self._reported_stages and list(self.output_dir.glob("*.txt")):
+                self._reported_stages.add("output")
+                self.progress_callback("generating", "UltraStar file generated", 95)
+                logger.debug("Progress: File generation complete (95%)")
                 self._monitoring = False
 
     def stop(self):
