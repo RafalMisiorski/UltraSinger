@@ -9,7 +9,7 @@ from typing import Dict, Optional, Callable
 from dataclasses import dataclass, field
 
 from api.models import JobStatus, ProcessingStep, QualityPreset, JobSource
-from services.youtube_service import download_youtube_audio, get_video_info
+from services.youtube_service import download_youtube_audio, get_video_info, download_youtube_video
 from services.ultrasinger_service import process_with_ultrasinger
 from services.duet_service import detect_speakers, split_by_speaker, merge_to_duet_format
 from utils.config import settings
@@ -27,6 +27,7 @@ class Job:
     quality: QualityPreset
     youtube_url: Optional[str] = None
     upload_filename: Optional[str] = None
+    artist: Optional[str] = None
     title: Optional[str] = None
     custom_name: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.now)
@@ -56,6 +57,16 @@ class Job:
     duet_result_file: Optional[Path] = None
     solo_1_result_file: Optional[Path] = None
     solo_2_result_file: Optional[Path] = None
+    # Manual lyrics
+    manual_lyrics: Optional[str] = None
+    auto_fetch_lyrics: Optional[bool] = False
+    lyrics_file: Optional[Path] = None
+    lyrics_start_time: Optional[float] = None
+    # Video settings
+    include_video: Optional[bool] = True
+    # Voice filter
+    filter_voices: Optional[bool] = None
+    hf_token: Optional[str] = None
 
 
 class JobQueue:
@@ -97,6 +108,12 @@ class JobQueue:
         is_duet: bool = False,
         speaker_1_name: Optional[str] = None,
         speaker_2_name: Optional[str] = None,
+        manual_lyrics: Optional[str] = None,
+        auto_fetch_lyrics: Optional[bool] = False,
+        lyrics_start_time: Optional[float] = None,
+        include_video: Optional[bool] = True,
+        filter_voices: Optional[bool] = None,
+        hf_token: Optional[str] = None,
     ) -> str:
         """Create a new job and add to queue"""
         job_id = str(uuid.uuid4())
@@ -116,6 +133,12 @@ class JobQueue:
             is_duet=is_duet,
             speaker_1_name=speaker_1_name or "Player 1",
             speaker_2_name=speaker_2_name or "Player 2",
+            manual_lyrics=manual_lyrics,
+            auto_fetch_lyrics=auto_fetch_lyrics,
+            lyrics_start_time=lyrics_start_time,
+            include_video=include_video,
+            filter_voices=filter_voices,
+            hf_token=hf_token,
         )
 
         self.jobs[job_id] = job
@@ -226,6 +249,10 @@ class JobQueue:
             is_duet=old_job.is_duet,
             speaker_1_name=old_job.speaker_1_name,
             speaker_2_name=old_job.speaker_2_name,
+            manual_lyrics=old_job.manual_lyrics,
+            lyrics_start_time=old_job.lyrics_start_time,
+            filter_voices=old_job.filter_voices,
+            hf_token=old_job.hf_token,
         )
 
         logger.info(f"Retrying job {job_id} as new job {new_job_id}")
@@ -266,9 +293,14 @@ class JobQueue:
 
     async def _process_job(self, job_id: str):
         """Process a job"""
+        logger.info(f"Job {job_id}: _process_job started, waiting for semaphore")
         async with self._semaphore:
+            logger.info(f"Job {job_id}: Acquired semaphore, starting processing")
             job = self.jobs[job_id]
             start_time = datetime.now()
+
+            # Capture the event loop for thread-safe callbacks
+            main_loop = asyncio.get_running_loop()
 
             try:
                 job.status = JobStatus.PROCESSING
@@ -278,7 +310,7 @@ class JobQueue:
                 job.output_dir = settings.output_dir / job_id
                 job.output_dir.mkdir(parents=True, exist_ok=True)
 
-                # Progress callback
+                # Progress callback (thread-safe)
                 def update_progress(step: str, message: str, percentage: float):
                     job.current_step = ProcessingStep(step)
                     job.progress_message = message
@@ -286,8 +318,8 @@ class JobQueue:
                     job.elapsed_seconds = (datetime.now() - start_time).total_seconds()
                     job.updated_at = datetime.now()
 
-                    # Broadcast to websockets
-                    asyncio.create_task(self._broadcast_progress(job_id, job))
+                    # Broadcast to websockets (thread-safe)
+                    asyncio.run_coroutine_threadsafe(self._broadcast_progress(job_id, job), main_loop)
 
                 # Get quality settings (with custom overrides if provided)
                 whisper_model, crepe_model, force_cpu = self._get_quality_settings(job)
@@ -295,9 +327,12 @@ class JobQueue:
                 # Step 1: Get input file
                 if job.source == JobSource.YOUTUBE:
                     # Fetch YouTube metadata first
+                    video_info = {}  # Initialize to empty dict in case fetch fails
                     try:
                         update_progress("downloading", "Fetching video information...", 0)
+                        logger.info(f"Job {job_id}: Starting get_video_info for {job.youtube_url}")
                         video_info = await get_video_info(job.youtube_url)
+                        logger.info(f"Job {job_id}: Got video info: {video_info.get('title')}")
                         job.youtube_thumbnail = video_info.get("thumbnail")
                         job.youtube_duration = video_info.get("duration")
                         job.youtube_channel = video_info.get("channel")
@@ -320,16 +355,43 @@ class JobQueue:
                     except Exception as e:
                         logger.warning(f"Failed to fetch YouTube metadata: {e}")
 
-                    update_progress("downloading", "Downloading from YouTube...", 2)
+                    # Check if audio is already cached (to avoid YouTube rate limits)
+                    cached_audio = None
+                    if video_info.get('id'):
+                        video_id = video_info['id']
+                        # Check all job output folders for this video ID
+                        for existing_job_dir in settings.output_dir.iterdir():
+                            if existing_job_dir.is_dir():
+                                # Look for audio files with this video ID in the name
+                                for audio_file in existing_job_dir.glob("**/*.wav"):
+                                    # Check if filename or parent dir contains video ID
+                                    if video_id in str(audio_file):
+                                        cached_audio = audio_file
+                                        logger.info(f"Job {job_id}: Found cached audio: {cached_audio}")
+                                        break
+                                if cached_audio:
+                                    break
 
-                    def yt_progress(msg: str, pct: float):
-                        update_progress("downloading", msg, 2 + (pct * 0.18))  # 2-20%
+                    if cached_audio and cached_audio.exists():
+                        # Use cached audio
+                        update_progress("downloading", "Using cached audio (already downloaded)...", 20)
+                        job.input_file = cached_audio
+                        # Extract artist/title from cached filename or use video info
+                        from services.youtube_service import extract_artist_title
+                        job.artist, job.title = extract_artist_title(video_info)
+                        logger.info(f"Job {job_id}: Reusing cached audio, skipping download")
+                    else:
+                        # Download from YouTube
+                        update_progress("downloading", "Downloading from YouTube...", 2)
 
-                    job.input_file, job.title = await download_youtube_audio(
-                        job.youtube_url,
-                        job.output_dir,
-                        yt_progress
-                    )
+                        def yt_progress(msg: str, pct: float):
+                            update_progress("downloading", msg, 2 + (pct * 0.18))  # 2-20%
+
+                        job.input_file, job.artist, job.title = await download_youtube_audio(
+                            job.youtube_url,
+                            job.output_dir,
+                            yt_progress
+                        )
                 else:
                     # Upload file is already in upload_dir
                     job.input_file = settings.upload_dir / job.upload_filename
@@ -344,6 +406,29 @@ class JobQueue:
                     }[job.quality]
                     duet_multiplier = 2.0 if job.is_duet else 1.0
                     job.estimated_duration_seconds = int(240 * quality_multiplier * duet_multiplier)
+
+                # Save manual lyrics to file if provided
+                if job.manual_lyrics:
+                    job.lyrics_file = job.output_dir / "manual_lyrics.txt"
+                    with open(job.lyrics_file, 'w', encoding='utf-8') as f:
+                        f.write(job.manual_lyrics)
+                    logger.info(f"Job {job_id}: Saved manual lyrics to {job.lyrics_file}")
+
+                # Auto-fetch lyrics if enabled and no manual lyrics provided
+                elif job.auto_fetch_lyrics and job.artist and job.title:
+                    update_progress("downloading", "Fetching lyrics automatically...", 15)
+                    try:
+                        from services.lyrics_service import auto_fetch_lyrics
+                        fetched_lyrics = await auto_fetch_lyrics(job.artist, job.title)
+                        if fetched_lyrics:
+                            job.lyrics_file = job.output_dir / "auto_lyrics.txt"
+                            with open(job.lyrics_file, 'w', encoding='utf-8') as f:
+                                f.write(fetched_lyrics)
+                            logger.info(f"Job {job_id}: Auto-fetched and saved lyrics to {job.lyrics_file}")
+                        else:
+                            logger.warning(f"Job {job_id}: Could not auto-fetch lyrics")
+                    except Exception as e:
+                        logger.error(f"Job {job_id}: Error auto-fetching lyrics: {e}")
 
                 # Step 2: Process with UltraSinger (or duet pipeline)
                 if job.is_duet:
@@ -402,6 +487,7 @@ class JobQueue:
                             force_cpu=force_cpu,
                             ultrasinger_src_path=settings.ultrasinger_src_path,
                             progress_callback=speaker_1_progress,
+                            create_video=job.include_video,
                         )
 
                         # Step 2d: Process speaker 2
@@ -423,6 +509,7 @@ class JobQueue:
                             crepe_model=crepe_model,
                             force_cpu=force_cpu,
                             ultrasinger_src_path=settings.ultrasinger_src_path,
+                            create_video=job.include_video,
                             progress_callback=speaker_2_progress,
                         )
 
@@ -466,7 +553,47 @@ class JobQueue:
                         force_cpu=force_cpu,
                         ultrasinger_src_path=settings.ultrasinger_src_path,
                         progress_callback=us_progress,
+                        lyrics_file=job.lyrics_file,
+                        lyrics_start_time=job.lyrics_start_time,
+                        filter_voices=job.filter_voices,
+                        hf_token=job.hf_token,
+                        create_video=job.include_video,
                     )
+
+                # Download video for YouTube sources if requested
+                if job.source == JobSource.YOUTUBE and job.include_video and job.youtube_url:
+                    update_progress("generating", "Downloading video from YouTube...", 95)
+                    logger.info(f"Job {job_id}: Starting video download")
+
+                    # Determine output directory for video (same as result file)
+                    video_output_dir = job.result_file.parent if job.result_file else job.output_dir
+
+                    # Use artist - title as filename base
+                    video_filename_base = f"{job.artist or 'Unknown'} - {job.title or 'Unknown'}"
+
+                    def video_progress(msg: str, pct: float):
+                        # Map to 95-99% range
+                        adjusted_pct = 95 + (pct * 0.04)
+                        update_progress("generating", msg, adjusted_pct)
+
+                    try:
+                        video_path = await download_youtube_video(
+                            url=job.youtube_url,
+                            output_dir=video_output_dir,
+                            filename_base=video_filename_base,
+                            progress_callback=video_progress,
+                            max_quality="720"
+                        )
+
+                        if video_path and video_path.exists():
+                            logger.info(f"Job {job_id}: Video downloaded to {video_path}")
+                            # Update the .txt file to include VIDEO reference
+                            await _add_video_to_ultrastar_txt(job.result_file, video_path.name)
+                        else:
+                            logger.warning(f"Job {job_id}: Video download failed, continuing without video")
+
+                    except Exception as e:
+                        logger.warning(f"Job {job_id}: Video download error: {e}, continuing without video")
 
                 # Success!
                 job.status = JobStatus.COMPLETED
@@ -548,6 +675,57 @@ class JobQueue:
                 break
             except Exception as e:
                 logger.error(f"Cleanup task error: {e}")
+
+
+async def _add_video_to_ultrastar_txt(txt_file: Path, video_filename: str) -> None:
+    """
+    Add or update VIDEO tag in UltraStar txt file.
+
+    Args:
+        txt_file: Path to the .txt file
+        video_filename: Name of the video file (just filename, not path)
+    """
+    if not txt_file or not txt_file.exists():
+        logger.warning(f"Cannot add video reference: txt file does not exist: {txt_file}")
+        return
+
+    try:
+        # Read the file
+        with open(txt_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        lines = content.split('\n')
+        new_lines = []
+        video_added = False
+
+        for line in lines:
+            # Check if VIDEO tag already exists
+            if line.startswith('#VIDEO:'):
+                # Update existing VIDEO tag
+                new_lines.append(f'#VIDEO:{video_filename}')
+                video_added = True
+            else:
+                new_lines.append(line)
+
+        # If VIDEO tag wasn't found, add it before BPM line
+        if not video_added:
+            final_lines = []
+            for line in new_lines:
+                # Insert VIDEO before BPM
+                if line.startswith('#BPM:'):
+                    final_lines.append(f'#VIDEO:{video_filename}')
+                    video_added = True
+                final_lines.append(line)
+            new_lines = final_lines
+
+        # Write back
+        with open(txt_file, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(new_lines))
+
+        logger.info(f"Added video reference '{video_filename}' to {txt_file}")
+
+    except Exception as e:
+        logger.error(f"Failed to add video reference to txt file: {e}")
 
 
 # Global queue instance

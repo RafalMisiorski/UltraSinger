@@ -1,11 +1,17 @@
 import musicbrainzngs
 import string
+import time
+import urllib.error
 from Levenshtein import ratio
 from dataclasses import dataclass
 from typing import Optional
 from Settings import Settings
 
-from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted, red_highlighted
+from modules.console_colors import ULTRASINGER_HEAD, blue_highlighted, red_highlighted, safe_print
+
+# Retry configuration for network errors
+MAX_RETRIES = 3
+RETRY_DELAY_BASE = 2  # seconds, will be multiplied by attempt number
 
 
 @dataclass
@@ -22,7 +28,47 @@ title_filter = [
     "official video",
     "official music video",
     "Offizielles Musikvideo",
+    "sanremo 2025",
+    "sanremo 2024",
+    "sanremo 2023",
 ]
+
+
+def extract_artist_and_title_from_string(origin_title: str) -> tuple[str, str]:
+    """
+    Try to extract artist and title from a YouTube-style title string.
+    Common patterns: "Artist - Song", "Artist_-_Song", "Artist - Song (Official Video)"
+    Returns (artist, title) or (None, origin_title) if extraction fails.
+    """
+    import re
+
+    # Clean up the title first
+    cleaned = origin_title
+    for f in title_filter:
+        cleaned = re.sub(re.escape(f), '', cleaned, flags=re.IGNORECASE).strip()
+
+    # Remove common suffixes in parentheses or brackets
+    cleaned = re.sub(r'\s*[\(\[].*?[\)\]]', '', cleaned).strip()
+
+    # Try different separator patterns
+    separators = [
+        r'\s+[-–—]\s+',      # "Artist - Song" with various dash types
+        r'_-_',              # "Artist_-_Song" (YouTube style)
+        r'\s*[-–—]\s*',      # "Artist-Song" with less strict spacing
+    ]
+
+    for sep in separators:
+        parts = re.split(sep, cleaned, maxsplit=1)
+        if len(parts) == 2:
+            artist = parts[0].strip().replace('_', ' ')
+            title = parts[1].strip().replace('_', ' ')
+            # Clean up any trailing/leading underscores or spaces
+            artist = re.sub(r'^[_\s]+|[_\s]+$', '', artist)
+            title = re.sub(r'^[_\s]+|[_\s]+$', '', title)
+            if artist and title:
+                return artist, title
+
+    return None, origin_title
 
 
 def __clean_string(s: str) -> str:
@@ -43,18 +89,40 @@ def search_musicbrainz(title: str, artist) -> SongInfo:
         if artist is not None:
             artist = artist.lower().replace(filter.lower(), "").strip()
 
-    if artist is None:
-        recording = __single_line_search(title)
-    else:
-        recording = __multi_line_search(artist, title)
+    # Retry logic for network errors
+    last_error = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            if artist is None:
+                recording = __single_line_search(title)
+            else:
+                recording = __multi_line_search(artist, title)
+            break  # Success, exit retry loop
+        except (urllib.error.URLError, ConnectionResetError, OSError, musicbrainzngs.NetworkError) as e:
+            last_error = e
+            if attempt < MAX_RETRIES:
+                delay = RETRY_DELAY_BASE * attempt
+                print(f"{ULTRASINGER_HEAD} {red_highlighted(f'Network error (attempt {attempt}/{MAX_RETRIES}): {e}')}")
+                print(f"{ULTRASINGER_HEAD} Retrying in {delay} seconds...")
+                time.sleep(delay)
+            else:
+                print(f"{ULTRASINGER_HEAD} {red_highlighted(f'Failed after {MAX_RETRIES} attempts: {e}')}")
+                raise  # Re-raise after all retries exhausted
 
     if recording is None:
-        print(f"{ULTRASINGER_HEAD} {red_highlighted('No match found')}")
-        return SongInfo(title=origin_title, artist="Unknown Artist")
+        print(f"{ULTRASINGER_HEAD} {red_highlighted('No match found on MusicBrainz')}")
+        # Try to extract artist from the title string (YouTube-style: "Artist - Song")
+        extracted_artist, extracted_title = extract_artist_and_title_from_string(origin_title)
+        if extracted_artist:
+            safe_print(f"{ULTRASINGER_HEAD} Extracted from title: Artist={blue_highlighted(extracted_artist)} Title={blue_highlighted(extracted_title)}")
+            return SongInfo(title=extracted_title, artist=extracted_artist)
+        else:
+            print(f"{ULTRASINGER_HEAD} {red_highlighted('Could not extract artist from title, using Unknown Artist')}")
+            return SongInfo(title=origin_title, artist="Unknown Artist")
 
     artist = recording['artist-credit-phrase']
     title = recording['title']
-    print(
+    safe_print(
         f"{ULTRASINGER_HEAD} Found data on Musicbrainz: Artist={blue_highlighted(artist)} Title={blue_highlighted(title)}")
 
     year = __get_year(recording)
@@ -156,16 +224,27 @@ def __get_image(recording) -> (bytes, str):
     image_url = None
     if 'release-list' in recording:
         for release in recording['release-list']:
-            try:
-                image_data = musicbrainzngs.get_image_front(release['id'])
-                image_list = musicbrainzngs.get_image_list(release['id'])
-                for image in image_list['images']:
-                    if image['front']:
-                        image_url = image['image']
+            for attempt in range(1, MAX_RETRIES + 1):
+                try:
+                    image_data = musicbrainzngs.get_image_front(release['id'])
+                    image_list = musicbrainzngs.get_image_list(release['id'])
+                    for image in image_list['images']:
+                        if image['front']:
+                            image_url = image['image']
+                            break
+                    break  # Success, exit retry loop
+                except (urllib.error.URLError, ConnectionResetError, OSError, musicbrainzngs.NetworkError) as e:
+                    if attempt < MAX_RETRIES:
+                        delay = RETRY_DELAY_BASE * attempt
+                        print(f"{ULTRASINGER_HEAD} {red_highlighted(f'Network error getting image (attempt {attempt}/{MAX_RETRIES}): {e}')}")
+                        time.sleep(delay)
+                    else:
+                        # After all retries, continue to next release
                         break
-                break
-            except musicbrainzngs.ResponseError:
-                continue
+                except musicbrainzngs.ResponseError:
+                    break  # No image for this release, try next
+            if image_data is not None:
+                break  # Found image, exit release loop
     if image_data is not None:
         print(f"{ULTRASINGER_HEAD} Found cover image")
 
@@ -179,7 +258,25 @@ def __get_year(recording):
         return year
 
     release_group_id = recording['release-list'][0]['release-group']['id']
-    release_group = musicbrainzngs.get_release_group_by_id(release_group_id)
+
+    # Retry logic for network errors
+    release_group = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            release_group = musicbrainzngs.get_release_group_by_id(release_group_id)
+            break  # Success, exit retry loop
+        except (urllib.error.URLError, ConnectionResetError, OSError, musicbrainzngs.NetworkError) as e:
+            if attempt < MAX_RETRIES:
+                delay = RETRY_DELAY_BASE * attempt
+                print(f"{ULTRASINGER_HEAD} {red_highlighted(f'Network error getting year (attempt {attempt}/{MAX_RETRIES}): {e}')}")
+                time.sleep(delay)
+            else:
+                print(f"{ULTRASINGER_HEAD} {red_highlighted(f'Failed to get year after {MAX_RETRIES} attempts')}")
+                return year  # Return None instead of crashing
+
+    if release_group is None:
+        return year
+
     if 'first-release-date' not in release_group['release-group']:
         return year
 
@@ -200,5 +297,5 @@ def __get_genres(recording) -> str:
         for tag in recording['tag-list']:
             genres += f"{tag['name'].strip()},"
     if genres is not None:
-        print(f"{ULTRASINGER_HEAD} Found genres: {blue_highlighted(genres)}")
+        safe_print(f"{ULTRASINGER_HEAD} Found genres: {blue_highlighted(genres)}")
     return genres
